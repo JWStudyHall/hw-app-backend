@@ -1,10 +1,15 @@
 from django.urls import path, include
-from .views import MuscleGroupViewSet, ExerciseViewSet, CreateUserView, LoginView, VerifyUserView
+from .views import MuscleGroupViewSet, ExerciseViewSet, WorkoutViewSet, WorkoutItemViewSet, WorkoutTemplateViewSet, WorkoutTemplateItemViewSet, CreateUserView, LoginView, VerifyUserView
 from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
 router.register("muscle-groups", MuscleGroupViewSet, basename="musclegroup")
 router.register("exercises", ExerciseViewSet, basename="exercise")
+router.register("workouts", WorkoutViewSet, basename="workout")
+router.register("workout-items", WorkoutItemViewSet, basename="workout-item")
+router.register("workout-templates", WorkoutTemplateViewSet, basename="workout-template")
+router.register("workout-template-items", WorkoutTemplateItemViewSet, basename="workout-template-item")
+
 
 urlpatterns = [
   path('api/', include(router.urls)),
