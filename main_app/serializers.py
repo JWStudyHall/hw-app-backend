@@ -1,6 +1,7 @@
 from rest_framework import serializers
-from .models import MuscleGroup, Exercise
+from .models import MuscleGroup, Exercise, Workout, WorkoutItem, WorkoutTemplate, WorkoutTemplateItem
 from django.contrib.auth.models import User
+from django.db import transaction
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)  # Add a password field, make it write-only
@@ -37,3 +38,124 @@ class ExerciseSerializer(serializers.ModelSerializer):
         model = Exercise
         fields = '__all__'
 
+
+class WorkoutItemSerializer(serializers.ModelSerializer):
+    exercise_detail = ExerciseSerializer(source="exercise", read_only=True)
+
+    class Meta:
+        model = WorkoutItem
+        fields = [
+            "id",
+            "workout",
+            "exercise",
+            "exercise_detail",
+            "order",
+            "sets",
+            "reps",
+            "weight",
+            "weight_unit",
+            "duration_seconds",
+            "distance_meters",
+            "rpe",
+            "notes",
+        ]
+        read_only_fields = ["workout"]
+
+
+class WorkoutSerializer(serializers.ModelSerializer):
+    items = WorkoutItemSerializer(many=True, required=False)
+
+    class Meta:
+        model = Workout
+        fields = "__all__"
+        read_only_fields = ["created_at", "updated_at"]
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        items_data = validated_data.pop("items", [])
+        validated_data["user"] = request.user
+
+        with transaction.atomic():
+            workout = Workout.objects.create(**validated_data)
+            if items_data:
+                WorkoutItem.objects.bulk_create(
+                    [WorkoutItem(workout=workout, **item) for item in items_data]
+                )
+        return workout
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop("items", None)
+
+        with transaction.atomic():
+            for attr, val in validated_data.items():
+                setattr(instance, attr, val)
+            instance.save()
+
+            if items_data is not None:
+                instance.items.all().delete()
+                if items_data:
+                    WorkoutItem.objects.bulk_create(
+                        [WorkoutItem(workout=instance, **item) for item in items_data]
+                    )
+        return instance
+    
+class WorkoutTemplateItemSerializer(serializers.ModelSerializer):
+    exercise_detail = ExerciseSerializer(source="exercise", read_only=True)
+
+    class Meta:
+        model = WorkoutTemplateItem
+        fields = "__all__"
+        read_only_fields = ["template"]
+
+
+class WorkoutTemplateSerializer(serializers.ModelSerializer):
+    items = WorkoutTemplateItemSerializer(many=True, required=False)
+    # If you want an easy "copy" action later, keeping source_template is helpful.
+    source_template = serializers.PrimaryKeyRelatedField(
+        queryset=WorkoutTemplate.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = WorkoutTemplate
+        fields = "__all__"
+        read_only_fields = ["created_at", "updated_at"]
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        items_data = validated_data.pop("items", [])
+        validated_data["user"] = request.user
+
+        with transaction.atomic():
+            template = WorkoutTemplate.objects.create(**validated_data)
+            if items_data:
+                WorkoutTemplateItem.objects.bulk_create(
+                    [
+                        WorkoutTemplateItem(template=template, **item)
+                        for item in items_data
+                    ]
+                )
+        return template
+
+    def update(self, instance, validated_data):
+        # - Update template fields
+        # - If `items` is provided, replace all items (delete + recreate)
+        items_data = validated_data.pop("items", None)
+
+        with transaction.atomic():
+            for attr, val in validated_data.items():
+                setattr(instance, attr, val)
+            instance.save()
+
+            if items_data is not None:
+                instance.items.all().delete()
+                if items_data:
+                    WorkoutTemplateItem.objects.bulk_create(
+                        [
+                            WorkoutTemplateItem(template=instance, **item)
+                            for item in items_data
+                        ]
+                    )
+
+        return instance

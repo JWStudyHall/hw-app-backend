@@ -1,11 +1,16 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import viewsets, permissions, generics, status
+from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import ExerciseSerializer, MuscleGroupSerializer, UserSerializer
-from .models import Exercise, MuscleGroup
+from .serializers import ExerciseSerializer, MuscleGroupSerializer, UserSerializer, WorkoutSerializer, WorkoutItemSerializer, WorkoutTemplateSerializer, WorkoutTemplateItemSerializer
+from .models import Exercise, MuscleGroup, Workout, WorkoutItem, WorkoutTemplate, WorkoutTemplateItem
+
+
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
+from django.utils.dateparse import parse_datetime
+from django.db import models
 
 # User Registration
 class CreateUserView(generics.CreateAPIView):
@@ -51,6 +56,19 @@ class VerifyUserView(APIView):
       'access': str(refresh.access_token),
       'user': UserSerializer(user).data
     })
+  
+class IsOwnerOrReadOnlyPublic(permissions.BasePermission):
+    """
+    - Owners can do anything.
+    - Non-owners can read if object has `is_public=True` (templates/plans).
+    """
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            if hasattr(obj, "is_public") and obj.is_public:
+                return True
+            return getattr(obj, "user_id", None) == getattr(request.user, "id", None)
+        return getattr(obj, "user_id", None) == getattr(request.user, "id", None)
+
 
 class MuscleGroupViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = MuscleGroup.objects.all().order_by("name")
@@ -61,3 +79,62 @@ class ExerciseViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Exercise.objects.all().order_by("name")
     serializer_class = ExerciseSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+class WorkoutViewSet(viewsets.ModelViewSet):
+    serializer_class = WorkoutSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = Workout.objects.filter(user=self.request.user).order_by("start_dt", "id")
+
+        # Optional date filtering for calendar views:
+        # GET /api/workouts/?start=2026-03-01T00:00:00Z&end=2026-04-01T00:00:00Z
+        start = self.request.query_params.get("start")
+        end = self.request.query_params.get("end")
+        if start and end:
+            start_dt = parse_datetime(start)
+            end_dt = parse_datetime(end)
+            if not start_dt or not end_dt:
+                raise ValidationError("Invalid start/end. Use ISO datetime strings.")
+            qs = qs.filter(start_dt__gte=start_dt, start_dt__lt=end_dt)
+
+        return qs
+
+class WorkoutItemViewSet(viewsets.ModelViewSet):
+    serializer_class = WorkoutItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return WorkoutItem.objects.filter(workout__user=self.request.user).order_by("order", "id")
+
+    def perform_create(self, serializer):
+        workout = serializer.validated_data["workout"]
+        if workout.user != self.request.user:
+            raise ValidationError("You do not own this workout.")
+        serializer.save()
+
+class WorkoutTemplateViewSet(viewsets.ModelViewSet):
+    serializer_class = WorkoutTemplateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnlyPublic]
+
+    def get_queryset(self):
+        # Owners can see their templates; everyone can see public templates
+        return WorkoutTemplate.objects.filter(
+            (models.Q(user=self.request.user) | models.Q(is_public=True))
+        ).distinct().order_by("-updated_at")
+
+
+class WorkoutTemplateItemViewSet(viewsets.ModelViewSet):
+    serializer_class = WorkoutTemplateItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Only items belonging to templates you own (or public templates if you want view-only)
+        return WorkoutTemplateItem.objects.filter(template__user=self.request.user).order_by("order", "id")
+
+    def perform_create(self, serializer):
+        # Force template ownership check
+        template = serializer.validated_data["template"]
+        if template.user != self.request.user:
+            raise ValidationError("You do not own this template.")
+        serializer.save()

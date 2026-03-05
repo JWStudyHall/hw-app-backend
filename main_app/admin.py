@@ -1,7 +1,51 @@
 from django.contrib import admin
-from .models import MuscleGroup, Exercise
+from .models import MuscleGroup, Exercise, Workout, WorkoutItem, WorkoutTemplate, WorkoutTemplateItem
+from django.utils import timezone
+from django.contrib import messages
 
-# Register your models here.
+@admin.action(description="Create workout from template")
+def create_workout_from_template(modeladmin, request, queryset):
+    if queryset.count() > 1:
+        modeladmin.message_user(request, "Please select only one template at a time.", level="error")
+        return
+    
+    template = queryset.first()
+    workout = Workout.objects.create(
+        user=request.user,
+        title=template.title,
+        start_dt=timezone.now(),  # required field
+        template=template,
+    )
+
+    for template_item in template.items.all():
+        WorkoutItem.objects.create(
+            workout=workout,
+            exercise=template_item.exercise,
+            sets=template_item.sets,
+            reps=template_item.reps,
+            weight=template_item.weight,
+            weight_unit=template_item.weight_unit,
+            duration_seconds=template_item.duration_seconds,
+            distance_meters=template_item.distance_meters
+        )
+    modeladmin.message_user(request, f"Workout '{workout.title}' created successfully.")
+
+class WorkoutItemInline(admin.TabularInline):
+    model = WorkoutItem
+    extra = 1  # Number of empty forms to display for adding new items
+
+class WorkoutAdmin(admin.ModelAdmin):
+    inlines = [WorkoutItemInline]
+
+class WorkoutTemplateItemInline(admin.TabularInline):
+    model = WorkoutTemplateItem
+    extra = 1  # Number of empty forms to display for adding new items
+
+class WorkoutTemplateAdmin(admin.ModelAdmin):
+    inlines = [WorkoutTemplateItemInline]
+    actions=[create_workout_from_template]
 
 admin.site.register(MuscleGroup)
 admin.site.register(Exercise)
+admin.site.register(Workout, WorkoutAdmin)
+admin.site.register(WorkoutTemplate, WorkoutTemplateAdmin)
