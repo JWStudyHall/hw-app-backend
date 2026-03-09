@@ -95,7 +95,7 @@ Workout plans generate dated workouts in a user's calendar.
 ---
 
 ## API Endpoints
-API Endpoints
+```bash
 
 /users
 │
@@ -137,4 +137,5 @@ API Endpoints
 │
 └── workout-template-plans
     └── /api/workout-template-plans/
+```
 ### Authentication
